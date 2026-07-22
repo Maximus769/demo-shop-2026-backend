@@ -91,21 +91,14 @@ async def stripe_webhook(request: Request, db: AsyncSession = Depends(get_db)):
 
     if event["type"] == "checkout.session.completed":
         try:
-            # stripe-python 5+ returns SDK objects, not plain dicts
-            # Convert to dict safely using to_dict() or __dict__
-            raw = event["data"]["object"]
-            if hasattr(raw, "to_dict"):
-                session_dict = raw.to_dict()
-            elif isinstance(raw, dict):
-                session_dict = raw
-            else:
-                session_dict = {k: v for k, v in raw.items()}
+            # Parse raw payload as plain dict — avoids all stripe SDK object issues
+            session_dict: dict = json.loads(payload)["data"]["object"]
 
             import resend as _r
             _r.api_key = os.getenv("RESEND_API_KEY", "")
             _seller = os.getenv("SELLER_EMAIL", "minhhoangle2909@gmail.com")
             _cd = session_dict.get("customer_details") or {}
-            _buyer = (_cd.get("email") if isinstance(_cd, dict) else getattr(_cd, "email", "")) or "inconnu"
+            _buyer = (_cd.get("email") if isinstance(_cd, dict) else "") or "inconnu"
             _amount = (session_dict.get("amount_total") or 0) / 100
             _sid = session_dict.get("id", "?")
 
