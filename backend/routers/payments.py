@@ -91,10 +91,28 @@ async def stripe_webhook(request: Request, db: AsyncSession = Depends(get_db)):
 
     if event["type"] == "checkout.session.completed":
         session_obj = event["data"]["object"]
+        # Fire-and-forget: don't let any exception block the 200 response
+        import resend as _r
+        _r.api_key = os.getenv("RESEND_API_KEY", "")
+        _seller = os.getenv("SELLER_EMAIL", "minhhoangle2909@gmail.com")
+        _cd = session_obj.get("customer_details") or {}
+        _buyer = _cd.get("email") or "inconnu"
+        _amount = (session_obj.get("amount_total") or 0) / 100
+        _sid = session_obj.get("id", "?")
+        try:
+            _r.Emails.send({
+                "from": "onboarding@resend.dev",
+                "to": _seller,
+                "subject": f"🛍 Commande {_sid[-8:]} — {_amount:.2f}€",
+                "html": f"<h2>Nouvelle commande</h2><p>Client: {_buyer}</p><p>Total: {_amount:.2f}€</p><p>Stripe: {_sid}</p>",
+            })
+            print(f"[webhook] Email sent: {_sid} {_buyer} {_amount}€")
+        except Exception as _e:
+            print(f"[webhook] Email error: {_e}\n{traceback.format_exc()}")
         try:
             await _handle_checkout_completed(session_obj, db)
         except Exception:
-            print(f"[webhook] ERROR:\n{traceback.format_exc()}")
+            print(f"[webhook] Handler ERROR:\n{traceback.format_exc()}")
 
     return {"received": True}
 
