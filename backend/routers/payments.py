@@ -17,6 +17,22 @@ STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET", "")
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")
 
 
+@router.post("/test-email")
+async def test_email():
+    import resend as _resend
+    _resend.api_key = os.getenv("RESEND_API_KEY", "")
+    try:
+        r = _resend.Emails.send({
+            "from": "onboarding@resend.dev",
+            "to": os.getenv("SELLER_EMAIL", "minhhoangle2909@gmail.com"),
+            "subject": "🧪 Test email backend Render",
+            "html": "<p>Email envoyé depuis Render. Resend key: " + os.getenv("RESEND_API_KEY","?")[:8] + "...</p>",
+        })
+        return {"ok": True, "id": r.get("id")}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
 @router.post("/checkout-session", response_model=CheckoutSessionResponse)
 async def create_checkout_session(body: CheckoutRequest):
     if not body.items:
