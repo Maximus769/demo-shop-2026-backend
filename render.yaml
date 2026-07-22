@@ -1,0 +1,28 @@
+services:
+  - type: web
+    name: demo-shop-2026-backend
+    runtime: python
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    plan: free
+    region: frankfurt
+    envVars:
+      - key: DATABASE_URL
+        value: sqlite+aiosqlite:///./shop.db
+      - key: SECRET_KEY
+        generateValue: true
+      - key: RESEND_API_KEY
+        value: re_6wFXY7ic_FNVQh4Su2rxXU9zxCY2eSzsi
+      - key: SELLER_EMAIL
+        value: minhhoangle2909@gmail.com
+      - key: ALLOWED_ORIGINS
+        value: https://frontend-maximus769s-projects.vercel.app,http://localhost:3000
+      - key: FRONTEND_URL
+        value: https://frontend-maximus769s-projects.vercel.app
+      - key: STRIPE_SECRET_KEY
+        value: sk_test_REPLACE_ME
+      - key: STRIPE_PUBLISHABLE_KEY
+        value: pk_test_REPLACE_ME
+      - key: STRIPE_WEBHOOK_SECRET
+        value: whsec_REPLACE_ME
