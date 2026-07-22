@@ -151,6 +151,19 @@ class OrderOut(BaseModel):
 
 # ─── Payments ─────────────────────────────────────────────────────────────────
 
+class CheckoutItem(BaseModel):
+    name: str
+    price: float = Field(gt=0)  # euros
+    quantity: int = Field(ge=1, le=99)
+    size: str
+    color: str
+
+
+class CheckoutRequest(BaseModel):
+    email: EmailStr
+    items: list[CheckoutItem]
+
+
 class CheckoutSessionResponse(BaseModel):
     session_id: str
     url: str

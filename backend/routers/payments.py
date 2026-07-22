@@ -3,13 +3,10 @@ import os
 import stripe
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
-from sqlalchemy.orm import selectinload
 
 from database import get_db
-from models import CartItem, Order, Product, User
-from schemas import CheckoutSessionResponse
-from auth import get_current_user
+from models import Order
+from schemas import CheckoutRequest, CheckoutSessionResponse
 from email_service import send_order_confirmation, send_seller_notification
 
 router = APIRouter(prefix="/api/payments", tags=["payments"])
@@ -20,70 +17,46 @@ FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")
 
 
 @router.post("/checkout-session", response_model=CheckoutSessionResponse)
-async def create_checkout_session(
-    request: Request,
-    db: AsyncSession = Depends(get_db),
-    user: User | None = Depends(get_current_user),
-):
-    session_cookie = request.cookies.get("shop_session")
-
-    if user:
-        stmt = (
-            select(CartItem)
-            .where(CartItem.user_id == user.id)
-            .options(selectinload(CartItem.product))
-        )
-    elif session_cookie:
-        stmt = (
-            select(CartItem)
-            .where(CartItem.session_id == session_cookie, CartItem.user_id.is_(None))
-            .options(selectinload(CartItem.product))
-        )
-    else:
-        raise HTTPException(status_code=400, detail="Panier vide ou session introuvable.")
-
-    result = await db.execute(stmt)
-    cart_items = result.scalars().all()
-
-    if not cart_items:
+async def create_checkout_session(body: CheckoutRequest):
+    if not body.items:
         raise HTTPException(status_code=400, detail="Le panier est vide.")
 
-    line_items = []
-    for item in cart_items:
-        product: Product = item.product
-        line_items.append({
+    if not stripe.api_key or stripe.api_key == "sk_test_REPLACE_ME":
+        raise HTTPException(
+            status_code=503,
+            detail="Paiement indisponible — clé Stripe non configurée.",
+        )
+
+    line_items = [
+        {
             "price_data": {
                 "currency": "eur",
-                "unit_amount": int(product.price * 100),
+                "unit_amount": int(round(item.price * 100)),
                 "product_data": {
-                    "name": f"{product.name} — {item.size} / {item.color}",
-                    "description": product.description or "",
-                    "images": [product.image_url] if product.image_url else [],
+                    "name": f"{item.name} — {item.size} / {item.color}",
                 },
             },
             "quantity": item.quantity,
-        })
-
-    metadata = {
-        "user_id": str(user.id) if user else "",
-        "session_id": session_cookie or "",
-    }
+        }
+        for item in body.items
+    ]
 
     try:
-        checkout_session = stripe.checkout.Session.create(
+        session = stripe.checkout.Session.create(
             payment_method_types=["card"],
+            customer_email=body.email,
             line_items=line_items,
             mode="payment",
             success_url=f"{FRONTEND_URL}/success?ref={{CHECKOUT_SESSION_ID}}",
             cancel_url=f"{FRONTEND_URL}/cart",
-            metadata=metadata,
             billing_address_collection="required",
             shipping_address_collection={"allowed_countries": ["FR", "BE", "CH", "LU"]},
+            metadata={"buyer_email": body.email},
         )
     except stripe.StripeError as exc:
         raise HTTPException(status_code=502, detail=f"Stripe error: {str(exc)}")
 
-    return CheckoutSessionResponse(session_id=checkout_session.id, url=checkout_session.url)
+    return CheckoutSessionResponse(session_id=session.id, url=session.url)
 
 
 @router.post("/webhook")
@@ -107,55 +80,30 @@ async def stripe_webhook(request: Request, db: AsyncSession = Depends(get_db)):
 
 async def _handle_checkout_completed(session: dict, db: AsyncSession) -> None:
     stripe_payment_id = session["id"]
-    buyer_email = session.get("customer_details", {}).get("email", "")
-    metadata = session.get("metadata", {})
-    user_id_str = metadata.get("user_id", "")
-    session_id = metadata.get("session_id", "")
+    buyer_email = session.get("customer_details", {}).get("email", "") or session.get("metadata", {}).get("buyer_email", "")
 
-    existing_result = await db.execute(
-        select(Order).where(Order.stripe_payment_id == stripe_payment_id)
-    )
-    if existing_result.scalar_one_or_none():
+    from sqlalchemy import select
+    existing = await db.execute(select(Order).where(Order.stripe_payment_id == stripe_payment_id))
+    if existing.scalar_one_or_none():
         return
 
-    user_id: int | None = int(user_id_str) if user_id_str else None
-
-    if user_id:
-        stmt = (
-            select(CartItem)
-            .where(CartItem.user_id == user_id)
-            .options(selectinload(CartItem.product))
-        )
-    elif session_id:
-        stmt = (
-            select(CartItem)
-            .where(CartItem.session_id == session_id, CartItem.user_id.is_(None))
-            .options(selectinload(CartItem.product))
-        )
-    else:
-        return
-
-    result = await db.execute(stmt)
-    cart_items = result.scalars().all()
-
+    line_items_resp = stripe.checkout.Session.list_line_items(stripe_payment_id, limit=100)
     order_items = []
     total = 0.0
-    for item in cart_items:
-        product: Product = item.product
-        subtotal = round(product.price * item.quantity, 2)
+    for li in line_items_resp.data:
+        unit_price = li.price.unit_amount / 100
+        qty = li.quantity
+        subtotal = round(unit_price * qty, 2)
         total += subtotal
         order_items.append({
-            "product_id": product.id,
-            "product_name": product.name,
-            "quantity": item.quantity,
-            "size": item.size,
-            "color": item.color,
-            "unit_price": product.price,
+            "product_name": li.description,
+            "quantity": qty,
+            "unit_price": unit_price,
             "subtotal": subtotal,
         })
 
     order = Order(
-        user_id=user_id,
+        user_id=None,
         email=buyer_email,
         items_json=json.dumps(order_items),
         total_amount=round(total, 2),
@@ -163,14 +111,8 @@ async def _handle_checkout_completed(session: dict, db: AsyncSession) -> None:
         status="paid",
     )
     db.add(order)
-    await db.flush()
+    await db.commit()
     await db.refresh(order)
 
-    for item in cart_items:
-        await db.delete(item)
-
-    await db.commit()
-
-    order_id_str = str(order.id)
-    send_order_confirmation(buyer_email, order_id_str, order_items, total)
-    send_seller_notification(buyer_email, order_id_str, order_items, total)
+    send_order_confirmation(buyer_email, str(order.id), order_items, total)
+    send_seller_notification(buyer_email, str(order.id), order_items, total)
