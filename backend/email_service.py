@@ -4,7 +4,7 @@ import resend
 resend.api_key = os.getenv("RESEND_API_KEY", "re_6wFXY7ic_FNVQh4Su2rxXU9zxCY2eSzsi")
 
 SELLER_EMAIL = os.getenv("SELLER_EMAIL", "minhhoangle2909@gmail.com")
-FROM_EMAIL = "orders@resend.dev"
+FROM_EMAIL = "onboarding@resend.dev"
 
 
 def build_buyer_email_html(order_id: str, items: list[dict], total: float) -> str:
