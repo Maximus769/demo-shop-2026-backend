@@ -47,6 +47,7 @@ app.include_router(orders.router)
 app.include_router(payments.router)
 
 
+@app.get("/", tags=["system"])
 @app.get("/health", tags=["system"])
 async def health():
     return {"status": "ok", "service": "demo-shop-2026"}
