@@ -1,5 +1,6 @@
 import json
 import os
+import traceback
 import stripe
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -73,7 +74,11 @@ async def stripe_webhook(request: Request, db: AsyncSession = Depends(get_db)):
 
     if event["type"] == "checkout.session.completed":
         session = event["data"]["object"]
-        await _handle_checkout_completed(session, db)
+        try:
+            await _handle_checkout_completed(session, db)
+        except Exception:
+            print(f"[webhook] ERROR in _handle_checkout_completed:\n{traceback.format_exc()}")
+            raise
 
     return {"received": True}
 
