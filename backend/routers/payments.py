@@ -90,29 +90,36 @@ async def stripe_webhook(request: Request, db: AsyncSession = Depends(get_db)):
         raise HTTPException(status_code=400, detail=f"Webhook error: {err_msg}")
 
     if event["type"] == "checkout.session.completed":
-        session_obj = event["data"]["object"]
-        # Fire-and-forget: don't let any exception block the 200 response
-        import resend as _r
-        _r.api_key = os.getenv("RESEND_API_KEY", "")
-        _seller = os.getenv("SELLER_EMAIL", "minhhoangle2909@gmail.com")
-        _cd = session_obj.get("customer_details") or {}
-        _buyer = _cd.get("email") or "inconnu"
-        _amount = (session_obj.get("amount_total") or 0) / 100
-        _sid = session_obj.get("id", "?")
         try:
+            # stripe-python 5+ returns SDK objects, not plain dicts
+            # Convert to dict safely using to_dict() or __dict__
+            raw = event["data"]["object"]
+            if hasattr(raw, "to_dict"):
+                session_dict = raw.to_dict()
+            elif isinstance(raw, dict):
+                session_dict = raw
+            else:
+                session_dict = {k: v for k, v in raw.items()}
+
+            import resend as _r
+            _r.api_key = os.getenv("RESEND_API_KEY", "")
+            _seller = os.getenv("SELLER_EMAIL", "minhhoangle2909@gmail.com")
+            _cd = session_dict.get("customer_details") or {}
+            _buyer = (_cd.get("email") if isinstance(_cd, dict) else getattr(_cd, "email", "")) or "inconnu"
+            _amount = (session_dict.get("amount_total") or 0) / 100
+            _sid = session_dict.get("id", "?")
+
             _r.Emails.send({
                 "from": "onboarding@resend.dev",
                 "to": _seller,
-                "subject": f"🛍 Commande {_sid[-8:]} — {_amount:.2f}€",
-                "html": f"<h2>Nouvelle commande</h2><p>Client: {_buyer}</p><p>Total: {_amount:.2f}€</p><p>Stripe: {_sid}</p>",
+                "subject": f"🛍 Commande {str(_sid)[-8:].upper()} — {_amount:.2f}€",
+                "html": f"<h2>Nouvelle commande</h2><p><b>Client:</b> {_buyer}</p><p><b>Total:</b> {_amount:.2f}€</p><p><b>Stripe ID:</b> {_sid}</p>",
             })
-            print(f"[webhook] Email sent: {_sid} {_buyer} {_amount}€")
-        except Exception as _e:
-            print(f"[webhook] Email error: {_e}\n{traceback.format_exc()}")
-        try:
-            await _handle_checkout_completed(session_obj, db)
+            print(f"[webhook] Seller email sent OK: {_buyer} {_amount:.2f}€")
+
+            await _handle_checkout_completed(session_dict, db)
         except Exception:
-            print(f"[webhook] Handler ERROR:\n{traceback.format_exc()}")
+            print(f"[webhook] ERROR:\n{traceback.format_exc()}")
 
     return {"received": True}
 
