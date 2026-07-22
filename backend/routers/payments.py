@@ -74,12 +74,11 @@ async def stripe_webhook(request: Request, db: AsyncSession = Depends(get_db)):
         raise HTTPException(status_code=400, detail=f"Webhook error: {err_msg}")
 
     if event["type"] == "checkout.session.completed":
-        session = event["data"]["object"]
+        session_obj = event["data"]["object"]
         try:
-            await _handle_checkout_completed(session, db)
+            await _handle_checkout_completed(session_obj, db)
         except Exception:
-            print(f"[webhook] ERROR in _handle_checkout_completed:\n{traceback.format_exc()}")
-            raise
+            print(f"[webhook] ERROR:\n{traceback.format_exc()}")
 
     return {"received": True}
 
