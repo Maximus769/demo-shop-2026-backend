@@ -1,9 +1,7 @@
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-from slowapi import Limiter
-from slowapi.util import get_remote_address
 
 from database import get_db
 from models import User
@@ -17,13 +15,11 @@ from auth import (
 )
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
-limiter = Limiter(key_func=get_remote_address)
 _bearer = HTTPBearer(auto_error=True)
 
 
 @router.post("/register", response_model=Token, status_code=status.HTTP_201_CREATED)
-@limiter.limit("10/minute")
-async def register(request: Request, body: UserCreate, db: AsyncSession = Depends(get_db)):
+async def register(body: UserCreate, db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(User).where(User.email == body.email))
     if result.scalar_one_or_none():
         raise HTTPException(
@@ -48,8 +44,7 @@ async def register(request: Request, body: UserCreate, db: AsyncSession = Depend
 
 
 @router.post("/login", response_model=Token)
-@limiter.limit("20/minute")
-async def login(request: Request, body: UserLogin, db: AsyncSession = Depends(get_db)):
+async def login(body: UserLogin, db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(User).where(User.email == body.email))
     user = result.scalar_one_or_none()
 
